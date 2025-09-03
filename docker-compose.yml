@@ -1,0 +1,195 @@
+version: "3.8"
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-videocall_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-videocall_db}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # Redis for Sessions and Caching
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    command: redis-server --appendonly yes
+
+  # Инициализация статических файлов и миграций
+  static-init:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - static_volume:/staticfiles
+      - media_volume:/app/media
+    env_file:
+      - .env
+    environment:
+      - DEBUG=False
+      - DB_HOST=db
+      - DB_PORT=5432
+      - REDIS_URL=redis://redis:6379/0
+      - POSTGRES_DB=${POSTGRES_DB:-videocall_db}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+    user: "0:0" # Запускаем как root для создания директорий
+    command: >
+      sh -c "
+        echo '🚀 Starting video call app initialization...' &&
+        echo '📁 Creating directories and setting permissions...' &&
+        mkdir -p /staticfiles /app/media /app/logs &&
+        chown -R 1000:1000 /staticfiles /app/media /app/logs &&
+        chmod -R 755 /app/logs &&
+        echo '🗄️ Running database migrations...' &&
+        python manage.py migrate &&
+        echo '📦 Collecting static files...' &&
+        python manage.py collectstatic --noinput --clear &&
+        echo '🔧 Setting final permissions...' &&
+        chown -R 1000:1000 /staticfiles /app/media /app/logs &&
+        echo '✅ Video call app initialization complete!'
+      "
+    restart: "no"
+
+  # Django Backend with Daphne (WebSocket support)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - static_volume:/staticfiles:ro
+      - media_volume:/app/media
+      - ./backend/logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      - DEBUG=False
+      - DB_HOST=db
+      - DB_PORT=5432
+      - REDIS_URL=redis://redis:6379/0
+      - POSTGRES_DB=${POSTGRES_DB:-videocall_db}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      static-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import requests; requests.get('http://localhost:8000/api/health/', timeout=10)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    command: >
+      sh -c "
+        echo '🌐 Starting Django backend with Daphne (WebSocket support)...' &&
+        echo '📊 Verifying configuration...' &&
+        python manage.py check &&
+        echo '🔌 Starting Daphne server...' &&
+        daphne -b 0.0.0.0 -p 8000 videocall_app.asgi:application --access-log - --verbosity 2
+      "
+
+  # Vue.js Frontend
+  frontend:
+    build:
+      context: ./videocall-frontend
+      dockerfile: Dockerfile
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx Reverse Proxy with WebSocket support
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - static_volume:/staticfiles:ro
+      - media_volume:/app/media:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost/health/",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  static_volume:
+    driver: local
+  media_volume:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge
+
