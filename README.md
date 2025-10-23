@@ -45,6 +45,11 @@ cd video-call-app
 
 2. **Запуск с Docker Compose**
 ```bash
+# поиск в проекте всех вхождений домена
+grep -rinI 'yourdomain\.com' ./
+
+# замена всех вхождений домена
+grep -rlI 'yourdomain\.com' ./ | xargs sed -i 's/yourdomain\.com/newdomain.ru/g'
 # Создайте .env файл из примера
 cp env.example .env
 
