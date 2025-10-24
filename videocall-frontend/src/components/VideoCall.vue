@@ -255,6 +255,23 @@
           <span>{{ connectionQualityText }}</span>
         </div>
       </div>
+
+      <!-- Share screen indicator -->
+      <div
+        v-if="webrtcStore.isScreenSharing"
+        class="absolute top-4 left-4 bg-blue-500 text-white px-3 py-1 rounded-lg text-sm z-10 flex items-center space-x-2"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+          ></path>
+        </svg>
+        <span>Sharing screen</span>
+      </div>
+
     </div>
 
     <!-- Controls -->
@@ -338,6 +355,46 @@
               stroke-linejoin="round"
               stroke-width="2"
               d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z"
+            ></path>
+          </svg>
+        </button>
+
+        <!-- Share Screen -->
+        <button
+          @click="toggleScreenShare"
+          :class="[
+            'control-button',
+            webrtcStore.isScreenSharing ? 'control-button-active' : 'control-button-inactive',
+          ]"
+          :title="webrtcStore.isScreenSharing ? 'Stop screen share' : 'Share screen'"
+          :disabled="isScreenShareSupported === false"
+        >
+          <svg
+            v-if="!webrtcStore.isScreenSharing"
+            class="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+            ></path>
+          </svg>
+          <svg
+            v-else
+            class="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M6 18L18 6M6 6l12 12"
             ></path>
           </svg>
         </button>
@@ -474,6 +531,25 @@
               </div>
             </div>
 
+            <!-- Screen Share Stats -->
+            <div v-if="webrtcStore.isScreenSharing && connectionStats?.video?.outbound">
+              <h4 class="font-medium text-gray-900 dark:text-white mb-2">Screen Share</h4>
+              <div class="space-y-2 pl-4">
+                <div class="flex justify-between">
+                  <span>Resolution</span>
+                  <span>{{ screenShareResolution }}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span>Frame Rate</span>
+                  <span>{{ screenShareFrameRate }} fps</span>
+                </div>
+                <div class="flex justify-between">
+                  <span>Bitrate</span>
+                  <span>{{ screenShareBitrate }} kbps</span>
+                </div>
+              </div>
+            </div>
+
             <!-- Audio Stats -->
             <div v-if="connectionStats.audio">
               <h4 class="font-medium text-gray-900 dark:text-white mb-2">Audio</h4>
@@ -567,6 +643,8 @@ const showConnectionQuality = ref(true)
 const isConnecting = ref(false)
 const connectingMessage = ref('Connecting...')
 const connectingSubMessage = ref('Setting up your video call')
+const isScreenShareSupported = ref(true)
+const screenShareError = ref(null)
 
 // Connection monitoring
 const connectionStats = ref(null)
@@ -709,6 +787,32 @@ const remoteVideoInfo = computed(() => {
     return `${frameWidth}×${frameHeight} @ ${Math.round(framesPerSecond)}fps`
   }
   return ''
+})
+
+const screenShareTitle = computed(() => {
+  if (isScreenShareSupported.value === false) {
+    return 'Screen sharing not supported'
+  }
+  return webrtcStore.isScreenSharing ? 'Stop screen share' : 'Share screen'
+})
+
+const screenShareResolution = computed(() => {
+  if (connectionStats.value?.video?.outbound && webrtcStore.isScreenSharing) {
+    const { frameWidth, frameHeight } = connectionStats.value.video.outbound
+    return `${frameWidth || 0}×${frameHeight || 0}`
+  }
+  return 'N/A'
+})
+
+const screenShareFrameRate = computed(() => {
+  return connectionStats.value?.video?.outbound?.framesPerSecond || 0
+})
+
+const screenShareBitrate = computed(() => {
+  if (connectionStats.value?.video?.outbound?.bytesSent && webrtcStore.isScreenSharing) {
+    return Math.round(connectionStats.value.video.outbound.bytesSent / 1000)
+  }
+  return 0
 })
 
 // Methods
@@ -867,6 +971,30 @@ const startStatsMonitoring = () => {
   }
 }
 
+const toggleScreenShare = async () => {
+  try {
+    if (webrtcStore.isScreenSharing) {
+      await webrtcStore.stopScreenShare()
+      globalStore.addNotification('Screen sharing stopped', 'success', 2000)
+    } else {
+      const result = await webrtcStore.startScreenShare()
+      if (result.success) {
+        globalStore.addNotification('Screen sharing started', 'success', 2000)
+
+        // Автоматически переключить размер локального видео при демонстрации экрана
+        if (localVideoSize.value === 'small') {
+          localVideoSize.value = 'medium'
+        }
+      } else {
+        globalStore.addNotification(result.error || 'Failed to share screen', 'error')
+      }
+    }
+  } catch (error) {
+    console.error('Screen share error:', error)
+    globalStore.addNotification('Failed to share screen', 'error')
+  }
+}
+
 // Watch for stream changes
 watch(
   () => webrtcStore.localStream,
@@ -890,6 +1018,16 @@ watch(
     })
   },
   { immediate: true },
+)
+
+watch(
+  () => webrtcStore.screenShareError,
+  (error) => {
+    if (error) {
+      screenShareError.value = error
+      globalStore.addNotification(`Screen share error: ${error}`, 'error')
+    }
+  }
 )
 
 // Update call duration
@@ -918,6 +1056,18 @@ const vClickOutside = {
 
 // Lifecycle
 onMounted(() => {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    isScreenShareSupported.value = false
+    console.warn('Screen sharing not supported in this browser')
+  }
+
+  // Проверяем наличие необходимых методов в store
+  if (typeof webrtcStore.startScreenShare !== 'function' ||
+      typeof webrtcStore.stopScreenShare !== 'function') {
+    isScreenShareSupported.value = false
+    console.warn('Screen sharing methods not available in WebRTC store')
+  }
+
   initializeCall()
   durationInterval = setInterval(updateCallDuration, 1000)
 })
@@ -963,6 +1113,10 @@ onUnmounted(async () => {
 
 .control-button-danger {
   @apply bg-red-500 hover:bg-red-600 text-white;
+}
+
+.control-button:disabled {
+  @apply opacity-50 cursor-not-allowed hover:scale-100 active:scale-100;
 }
 
 /* Animations */
