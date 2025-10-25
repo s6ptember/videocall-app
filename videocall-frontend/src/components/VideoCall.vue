@@ -366,7 +366,7 @@
             'control-button',
             webrtcStore.isScreenSharing ? 'control-button-active' : 'control-button-inactive',
           ]"
-          :title="webrtcStore.isScreenSharing ? 'Stop screen share' : 'Share screen'"
+          :title="screenShareTitle"
           :disabled="isScreenShareSupported === false"
         >
           <svg
@@ -974,14 +974,25 @@ const startStatsMonitoring = () => {
 const toggleScreenShare = async () => {
   try {
     if (webrtcStore.isScreenSharing) {
-      await webrtcStore.stopScreenShare()
-      globalStore.addNotification('Screen sharing stopped', 'success', 2000)
+      // Если уже идет демонстрация экрана, останавливаем ее
+      const result = await webrtcStore.stopScreenShare()
+      if (result.success) {
+        globalStore.addNotification('Screen sharing stopped', 'success', 2000)
+
+        // Восстанавливаем размер локального видео
+        if (localVideoSize.value === 'small') {
+          localVideoSize.value = 'medium'
+        }
     } else {
+        globalStore.addNotification(result.error || 'Failed to stop screen share', 'error')
+      }
+    } else {
+      // Запускаем демонстрацию экрана
       const result = await webrtcStore.startScreenShare()
       if (result.success) {
         globalStore.addNotification('Screen sharing started', 'success', 2000)
 
-        // Автоматически переключить размер локального видео при демонстрации экрана
+        // Увеличиваем размер локального видео при демонстрации экрана
         if (localVideoSize.value === 'small') {
           localVideoSize.value = 'medium'
         }

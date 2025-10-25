@@ -425,6 +425,10 @@ export const useWebRTCStore = defineStore('webrtc', () => {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
         throw new Error('Screen sharing not supported in this browser')
       }
+      // Если уже идет демонстрация экрана, сначала останавливаем ее
+      if (isScreenSharing.value) {
+        await stopScreenShare()
+      }
 
       // Получаем поток демонстрации экрана
       const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -438,9 +442,8 @@ export const useWebRTCStore = defineStore('webrtc', () => {
           sampleRate: 44100
         }
       })
-
-      // Сохраняем оригинальную видеодорожку если она есть
-      if (localStream.value && localStream.value.getVideoTracks().length > 0) {
+      // Сохраняем оригинальную видеодорожку если она есть и если еще не сохранена
+      if (localStream.value && localStream.value.getVideoTracks().length > 0 && !originalVideoTrack.value) {
         originalVideoTrack.value = localStream.value.getVideoTracks()[0]
       }
 
@@ -478,6 +481,37 @@ export const useWebRTCStore = defineStore('webrtc', () => {
       return { success: true }
     } catch (error) {
       console.error('Screen share error:', error)
+
+      // Если пользователь отменил выбор экрана, восстанавливаем оригинальную видеодорожку
+      if (error.name === 'NotAllowedError' || error.name === 'AbortError') {
+        // Восстанавливаем оригинальную видеодорожку
+        if (originalVideoTrack.value && localStream.value) {
+          const currentVideoTracks = localStream.value.getVideoTracks()
+          currentVideoTracks.forEach(track => {
+            if (track.kind === 'video') {
+              track.stop()
+              localStream.value.removeTrack(track)
+            }
+          })
+
+          // Восстанавливаем оригинальную дорожку
+          const newOriginalTrack = originalVideoTrack.value.clone()
+          localStream.value.addTrack(newOriginalTrack)
+
+          // Обновляем в peer connection
+          if (peerConnection.value) {
+            const sender = peerConnection.value.getSenders().find(s =>
+              s.track && s.track.kind === 'video'
+            )
+            if (sender) {
+              await sender.replaceTrack(newOriginalTrack)
+            }
+          }
+
+          originalVideoTrack.value = newOriginalTrack
+        }
+      }
+
       screenShareError.value = error.message
       return { success: false, error: error.message }
     }
@@ -486,15 +520,24 @@ export const useWebRTCStore = defineStore('webrtc', () => {
   // Метод для остановки демонстрации экрана
   const stopScreenShare = async () => {
     try {
-      // Восстанавливаем оригинальную видеодорожку
+      // Останавливаем поток демонстрации экрана
+      if (screenShareStream.value) {
+        screenShareStream.value.getTracks().forEach(track => track.stop())
+        screenShareStream.value = null
+      }
+
+      // Восстанавливаем оригинальную видеодорожку если она была сохранена
       if (originalVideoTrack.value && localStream.value) {
+        // Удаляем текущие видеодорожки (от демонстрации экрана)
         const currentVideoTracks = localStream.value.getVideoTracks()
         currentVideoTracks.forEach(track => {
           track.stop()
           localStream.value.removeTrack(track)
         })
 
-        localStream.value.addTrack(originalVideoTrack.value)
+        // Создаем клон оригинальной дорожки (так как оригинальная дорожка была остановлена)
+        const newVideoTrack = originalVideoTrack.value.clone()
+        localStream.value.addTrack(newVideoTrack)
 
         // Обновляем видеодорожку в peer connection
         if (peerConnection.value) {
@@ -502,19 +545,16 @@ export const useWebRTCStore = defineStore('webrtc', () => {
             s.track && s.track.kind === 'video'
           )
           if (sender) {
-            await sender.replaceTrack(originalVideoTrack.value)
-          }
+            await sender.replaceTrack(newVideoTrack)
         }
       }
 
-      // Останавливаем поток демонстрации экрана
-      if (screenShareStream.value) {
-        screenShareStream.value.getTracks().forEach(track => track.stop())
-        screenShareStream.value = null
+        // Обновляем состояние видеодорожки
+        isVideoEnabled.value = newVideoTrack.enabled
+        originalVideoTrack.value = newVideoTrack
       }
 
       isScreenSharing.value = false
-      originalVideoTrack.value = null
       screenShareError.value = null
 
       return { success: true }
