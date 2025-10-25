@@ -17,6 +17,10 @@ export const useWebRTCStore = defineStore('webrtc', () => {
   const connectionState = ref('new') // new, connecting, connected, disconnected, failed
   const remoteParticipants = ref([])
   const localParticipantId = ref(null)
+  const isScreenSharing = ref(false)
+  const screenShareStream = ref(null)
+  const screenShareError = ref(null)
+  const originalVideoTrack = ref(null)
 
   // Media constraints
   const mediaConstraints = ref({
@@ -382,6 +386,9 @@ export const useWebRTCStore = defineStore('webrtc', () => {
   const endCall = async () => {
     try {
       // Close peer connection
+      if (isScreenSharing.value) {
+        await stopScreenShare()
+      }
       if (peerConnection.value) {
         peerConnection.value.close()
         peerConnection.value = null
@@ -413,6 +420,151 @@ export const useWebRTCStore = defineStore('webrtc', () => {
     }
   }
 
+  const startScreenShare = async () => {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        throw new Error('Screen sharing not supported in this browser')
+      }
+      // Если уже идет демонстрация экрана, сначала останавливаем ее
+      if (isScreenSharing.value) {
+        await stopScreenShare()
+      }
+
+      // Получаем поток демонстрации экрана
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          cursor: 'always',
+          displaySurface: 'window'
+        },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 44100
+        }
+      })
+      // Сохраняем оригинальную видеодорожку если она есть и если еще не сохранена
+      if (localStream.value && localStream.value.getVideoTracks().length > 0 && !originalVideoTrack.value) {
+        originalVideoTrack.value = localStream.value.getVideoTracks()[0]
+      }
+
+      // Останавливаем оригинальную видеодорожку
+      if (originalVideoTrack.value) {
+        originalVideoTrack.value.stop()
+        localStream.value.removeTrack(originalVideoTrack.value)
+      }
+
+      // Добавляем новую видеодорожку от демонстрации экрана
+      const videoTrack = stream.getVideoTracks()[0]
+      if (localStream.value) {
+        localStream.value.addTrack(videoTrack)
+      }
+
+      // Обработка завершения демонстрации экрана пользователем
+      videoTrack.onended = () => {
+        stopScreenShare()
+      }
+
+      // Обновляем видеодорожку в peer connection
+      if (peerConnection.value) {
+        const sender = peerConnection.value.getSenders().find(s =>
+          s.track && s.track.kind === 'video'
+        )
+        if (sender) {
+          await sender.replaceTrack(videoTrack)
+        }
+      }
+
+      screenShareStream.value = stream
+      isScreenSharing.value = true
+      screenShareError.value = null
+
+      return { success: true }
+    } catch (error) {
+      console.error('Screen share error:', error)
+
+      // Если пользователь отменил выбор экрана, восстанавливаем оригинальную видеодорожку
+      if (error.name === 'NotAllowedError' || error.name === 'AbortError') {
+        // Восстанавливаем оригинальную видеодорожку
+        if (originalVideoTrack.value && localStream.value) {
+          const currentVideoTracks = localStream.value.getVideoTracks()
+          currentVideoTracks.forEach(track => {
+            if (track.kind === 'video') {
+              track.stop()
+              localStream.value.removeTrack(track)
+            }
+          })
+
+          // Восстанавливаем оригинальную дорожку
+          const newOriginalTrack = originalVideoTrack.value.clone()
+          localStream.value.addTrack(newOriginalTrack)
+
+          // Обновляем в peer connection
+          if (peerConnection.value) {
+            const sender = peerConnection.value.getSenders().find(s =>
+              s.track && s.track.kind === 'video'
+            )
+            if (sender) {
+              await sender.replaceTrack(newOriginalTrack)
+            }
+          }
+
+          originalVideoTrack.value = newOriginalTrack
+        }
+      }
+
+      screenShareError.value = error.message
+      return { success: false, error: error.message }
+    }
+  }
+
+  // Метод для остановки демонстрации экрана
+  const stopScreenShare = async () => {
+    try {
+      // Останавливаем поток демонстрации экрана
+      if (screenShareStream.value) {
+        screenShareStream.value.getTracks().forEach(track => track.stop())
+        screenShareStream.value = null
+      }
+
+      // Восстанавливаем оригинальную видеодорожку если она была сохранена
+      if (originalVideoTrack.value && localStream.value) {
+        // Удаляем текущие видеодорожки (от демонстрации экрана)
+        const currentVideoTracks = localStream.value.getVideoTracks()
+        currentVideoTracks.forEach(track => {
+          track.stop()
+          localStream.value.removeTrack(track)
+        })
+
+        // Создаем клон оригинальной дорожки (так как оригинальная дорожка была остановлена)
+        const newVideoTrack = originalVideoTrack.value.clone()
+        localStream.value.addTrack(newVideoTrack)
+
+        // Обновляем видеодорожку в peer connection
+        if (peerConnection.value) {
+          const sender = peerConnection.value.getSenders().find(s =>
+            s.track && s.track.kind === 'video'
+          )
+          if (sender) {
+            await sender.replaceTrack(newVideoTrack)
+        }
+      }
+
+        // Обновляем состояние видеодорожки
+        isVideoEnabled.value = newVideoTrack.enabled
+        originalVideoTrack.value = newVideoTrack
+      }
+
+      isScreenSharing.value = false
+      screenShareError.value = null
+
+      return { success: true }
+    } catch (error) {
+      console.error('Stop screen share error:', error)
+      screenShareError.value = error.message
+      return { success: false, error: error.message }
+    }
+  }
+
   return {
     // State
     localStream,
@@ -441,6 +593,10 @@ export const useWebRTCStore = defineStore('webrtc', () => {
     toggleVideo,
     toggleAudio,
     endCall,
+    isScreenSharing,
+    screenShareError,
+    startScreenShare,
+    stopScreenShare,
   }
 })
 
