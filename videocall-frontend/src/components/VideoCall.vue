@@ -108,13 +108,50 @@
           ref="remoteVideoRef"
           autoplay
           playsinline
-          class="w-full h-full object-cover"
+          class="w-full h-full object-cover cursor-pointer"
           @loadedmetadata="onRemoteVideoLoaded"
+          @click="toggleFullscreen"
+          @dblclick="toggleFullscreen"
         ></video>
+
+       <!-- Fullscreen toggle button -->
+       <button
+         v-if="!isFullscreen"
+         @click="toggleFullscreen"
+         class="absolute top-4 right-4 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-lg transition-all z-10"
+         title="Enter fullscreen"
+       >
+         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+           <path
+             stroke-linecap="round"
+             stroke-linejoin="round"
+             stroke-width="2"
+             d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"
+           ></path>
+         </svg>
+       </button>
+
+       <!-- Exit fullscreen button -->
+       <button
+         v-else
+         @click="toggleFullscreen"
+         class="absolute top-4 right-4 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-lg transition-all z-50"
+         title="Exit fullscreen"
+       >
+         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+           <path
+             stroke-linecap="round"
+             stroke-linejoin="round"
+             stroke-width="2"
+             d="M6 18L18 6M6 6l12 12"
+           ></path>
+         </svg>
+       </button>
+
 
         <!-- Remote video overlay info -->
         <div
-          v-if="showVideoInfo"
+          v-if="showVideoInfo && !isFullscreen"
           class="absolute top-4 left-4 bg-black bg-opacity-50 px-3 py-2 rounded-lg text-white text-sm"
         >
           <p>{{ remoteVideoInfo }}</p>
@@ -645,6 +682,8 @@ const connectingMessage = ref('Connecting...')
 const connectingSubMessage = ref('Setting up your video call')
 const isScreenShareSupported = ref(true)
 const screenShareError = ref(null)
+const isFullscreen = ref(false)
+const fullscreenElement = ref(null)
 
 // Connection monitoring
 const connectionStats = ref(null)
@@ -876,6 +915,12 @@ const initializeCall = async () => {
   }
 }
 
+const handleKeydown = (event) => {
+  if (event.key === 'Escape' && isFullscreen.value) {
+    toggleFullscreen()
+  }
+}
+
 const handleEndCall = async () => {
   try {
     // Show confirmation if call is active
@@ -971,6 +1016,14 @@ const startStatsMonitoring = () => {
   }
 }
 
+const handleFullscreenChange = () => {
+  isFullscreen.value = !!(
+    document.fullscreenElement ||
+    document.webkitFullscreenElement ||
+    document.msFullscreenElement
+  )
+}
+
 const toggleScreenShare = async () => {
   try {
     if (webrtcStore.isScreenSharing) {
@@ -1003,6 +1056,36 @@ const toggleScreenShare = async () => {
   } catch (error) {
     console.error('Screen share error:', error)
     globalStore.addNotification('Failed to share screen', 'error')
+  }
+}
+
+const toggleFullscreen = async () => {
+  try {
+    if (!isFullscreen.value) {
+      // Вход в полноэкранный режим
+      const element = remoteVideoRef.value || document.documentElement
+      fullscreenElement.value = element
+
+      if (element.requestFullscreen) {
+        await element.requestFullscreen()
+      } else if (element.webkitRequestFullscreen) {
+        await element.webkitRequestFullscreen()
+      } else if (element.msRequestFullscreen) {
+        await element.msRequestFullscreen()
+      }
+    } else {
+      // Выход из полноэкранного режима
+      if (document.exitFullscreen) {
+        await document.exitFullscreen()
+      } else if (document.webkitExitFullscreen) {
+        await document.webkitExitFullscreen()
+      } else if (document.msExitFullscreen) {
+        await document.msExitFullscreen()
+      }
+    }
+  } catch (error) {
+    console.error('Fullscreen error:', error)
+    globalStore.addNotification('Fullscreen mode not supported', 'error')
   }
 }
 
@@ -1072,6 +1155,11 @@ onMounted(() => {
     console.warn('Screen sharing not supported in this browser')
   }
 
+  document.addEventListener('fullscreenchange', handleFullscreenChange)
+  document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+  document.addEventListener('msfullscreenchange', handleFullscreenChange)
+  document.addEventListener('keydown', handleKeydown)
+
   // Проверяем наличие необходимых методов в store
   if (typeof webrtcStore.startScreenShare !== 'function' ||
       typeof webrtcStore.stopScreenShare !== 'function') {
@@ -1084,6 +1172,12 @@ onMounted(() => {
 })
 
 onUnmounted(async () => {
+
+  document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+  document.removeEventListener('msfullscreenchange', handleFullscreenChange)
+  document.removeEventListener('keydown', handleKeydown)
+
   // Cleanup intervals
   if (durationInterval) {
     clearInterval(durationInterval)
@@ -1169,4 +1263,51 @@ onUnmounted(async () => {
   padding-bottom: env(safe-area-inset-bottom);
   padding-left: env(safe-area-inset-left);
 }
+
+/* Fullscreen styles */
+:fullscreen .safe-area-inset,
+:-webkit-full-screen .safe-area-inset,
+:-moz-full-screen .safe-area-inset,
+:-ms-fullscreen .safe-area-inset {
+  display: none;
+}
+
+:fullscreen .control-button,
+:-webkit-full-screen .control-button,
+:-moz-full-screen .control-button,
+:-ms-fullscreen .control-button {
+  display: none;
+}
+
+:fullscreen #app,
+:-webkit-full-screen #app,
+:-moz-full-screen #app,
+:-ms-fullscreen #app {
+  background: black;
+}
+
+/* Hide elements in fullscreen */
+:fullscreen header,
+:-webkit-full-screen header,
+:-moz-full-screen header,
+:-ms-fullscreen header {
+  display: none !important;
+}
+
+:fullscreen .bg-gray-900, /* Controls container */
+:-webkit-full-screen .bg-gray-900,
+:-moz-full-screen .bg-gray-900,
+:-ms-fullscreen .bg-gray-900 {
+  display: none !important;
+}
+
+/* Ensure video takes full space in fullscreen */
+:fullscreen video,
+:-webkit-full-screen video,
+:-moz-full-screen video,
+:-ms-fullscreen video {
+  object-fit: contain;
+  background: black;
+}
+
 </style>
