@@ -108,13 +108,50 @@
           ref="remoteVideoRef"
           autoplay
           playsinline
-          class="w-full h-full object-cover"
+          class="w-full h-full object-cover cursor-pointer"
           @loadedmetadata="onRemoteVideoLoaded"
+          @click="toggleFullscreen"
+          @dblclick="toggleFullscreen"
         ></video>
+
+       <!-- Fullscreen toggle button -->
+       <button
+         v-if="!isFullscreen"
+         @click="toggleFullscreen"
+         class="absolute top-4 right-4 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-lg transition-all z-10"
+         title="Enter fullscreen"
+       >
+         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+           <path
+             stroke-linecap="round"
+             stroke-linejoin="round"
+             stroke-width="2"
+             d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"
+           ></path>
+         </svg>
+       </button>
+
+       <!-- Exit fullscreen button -->
+       <button
+         v-else
+         @click="toggleFullscreen"
+         class="absolute top-4 right-4 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-lg transition-all z-50"
+         title="Exit fullscreen"
+       >
+         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+           <path
+             stroke-linecap="round"
+             stroke-linejoin="round"
+             stroke-width="2"
+             d="M6 18L18 6M6 6l12 12"
+           ></path>
+         </svg>
+       </button>
+
 
         <!-- Remote video overlay info -->
         <div
-          v-if="showVideoInfo"
+          v-if="showVideoInfo && !isFullscreen"
           class="absolute top-4 left-4 bg-black bg-opacity-50 px-3 py-2 rounded-lg text-white text-sm"
         >
           <p>{{ remoteVideoInfo }}</p>
@@ -255,6 +292,23 @@
           <span>{{ connectionQualityText }}</span>
         </div>
       </div>
+
+      <!-- Share screen indicator -->
+      <div
+        v-if="webrtcStore.isScreenSharing"
+        class="absolute top-4 left-4 bg-blue-500 text-white px-3 py-1 rounded-lg text-sm z-10 flex items-center space-x-2"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+          ></path>
+        </svg>
+        <span>Sharing screen</span>
+      </div>
+
     </div>
 
     <!-- Controls -->
@@ -338,6 +392,46 @@
               stroke-linejoin="round"
               stroke-width="2"
               d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z"
+            ></path>
+          </svg>
+        </button>
+
+        <!-- Share Screen -->
+        <button
+          @click="toggleScreenShare"
+          :class="[
+            'control-button',
+            webrtcStore.isScreenSharing ? 'control-button-active' : 'control-button-inactive',
+          ]"
+          :title="screenShareTitle"
+          :disabled="isScreenShareSupported === false"
+        >
+          <svg
+            v-if="!webrtcStore.isScreenSharing"
+            class="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+            ></path>
+          </svg>
+          <svg
+            v-else
+            class="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M6 18L18 6M6 6l12 12"
             ></path>
           </svg>
         </button>
@@ -474,6 +568,25 @@
               </div>
             </div>
 
+            <!-- Screen Share Stats -->
+            <div v-if="webrtcStore.isScreenSharing && connectionStats?.video?.outbound">
+              <h4 class="font-medium text-gray-900 dark:text-white mb-2">Screen Share</h4>
+              <div class="space-y-2 pl-4">
+                <div class="flex justify-between">
+                  <span>Resolution</span>
+                  <span>{{ screenShareResolution }}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span>Frame Rate</span>
+                  <span>{{ screenShareFrameRate }} fps</span>
+                </div>
+                <div class="flex justify-between">
+                  <span>Bitrate</span>
+                  <span>{{ screenShareBitrate }} kbps</span>
+                </div>
+              </div>
+            </div>
+
             <!-- Audio Stats -->
             <div v-if="connectionStats.audio">
               <h4 class="font-medium text-gray-900 dark:text-white mb-2">Audio</h4>
@@ -567,6 +680,10 @@ const showConnectionQuality = ref(true)
 const isConnecting = ref(false)
 const connectingMessage = ref('Connecting...')
 const connectingSubMessage = ref('Setting up your video call')
+const isScreenShareSupported = ref(true)
+const screenShareError = ref(null)
+const isFullscreen = ref(false)
+const fullscreenElement = ref(null)
 
 // Connection monitoring
 const connectionStats = ref(null)
@@ -711,6 +828,32 @@ const remoteVideoInfo = computed(() => {
   return ''
 })
 
+const screenShareTitle = computed(() => {
+  if (isScreenShareSupported.value === false) {
+    return 'Screen sharing not supported'
+  }
+  return webrtcStore.isScreenSharing ? 'Stop screen share' : 'Share screen'
+})
+
+const screenShareResolution = computed(() => {
+  if (connectionStats.value?.video?.outbound && webrtcStore.isScreenSharing) {
+    const { frameWidth, frameHeight } = connectionStats.value.video.outbound
+    return `${frameWidth || 0}×${frameHeight || 0}`
+  }
+  return 'N/A'
+})
+
+const screenShareFrameRate = computed(() => {
+  return connectionStats.value?.video?.outbound?.framesPerSecond || 0
+})
+
+const screenShareBitrate = computed(() => {
+  if (connectionStats.value?.video?.outbound?.bytesSent && webrtcStore.isScreenSharing) {
+    return Math.round(connectionStats.value.video.outbound.bytesSent / 1000)
+  }
+  return 0
+})
+
 // Methods
 const initializeCall = async () => {
   const roomId = route.params.roomId
@@ -769,6 +912,12 @@ const initializeCall = async () => {
     globalStore.addNotification('Failed to join call', 'error')
     isConnecting.value = false
     router.push('/')
+  }
+}
+
+const handleKeydown = (event) => {
+  if (event.key === 'Escape' && isFullscreen.value) {
+    toggleFullscreen()
   }
 }
 
@@ -867,6 +1016,79 @@ const startStatsMonitoring = () => {
   }
 }
 
+const handleFullscreenChange = () => {
+  isFullscreen.value = !!(
+    document.fullscreenElement ||
+    document.webkitFullscreenElement ||
+    document.msFullscreenElement
+  )
+}
+
+const toggleScreenShare = async () => {
+  try {
+    if (webrtcStore.isScreenSharing) {
+      // Если уже идет демонстрация экрана, останавливаем ее
+      const result = await webrtcStore.stopScreenShare()
+      if (result.success) {
+        globalStore.addNotification('Screen sharing stopped', 'success', 2000)
+
+        // Восстанавливаем размер локального видео
+        if (localVideoSize.value === 'small') {
+          localVideoSize.value = 'medium'
+        }
+    } else {
+        globalStore.addNotification(result.error || 'Failed to stop screen share', 'error')
+      }
+    } else {
+      // Запускаем демонстрацию экрана
+      const result = await webrtcStore.startScreenShare()
+      if (result.success) {
+        globalStore.addNotification('Screen sharing started', 'success', 2000)
+
+        // Увеличиваем размер локального видео при демонстрации экрана
+        if (localVideoSize.value === 'small') {
+          localVideoSize.value = 'medium'
+        }
+      } else {
+        globalStore.addNotification(result.error || 'Failed to share screen', 'error')
+      }
+    }
+  } catch (error) {
+    console.error('Screen share error:', error)
+    globalStore.addNotification('Failed to share screen', 'error')
+  }
+}
+
+const toggleFullscreen = async () => {
+  try {
+    if (!isFullscreen.value) {
+      // Вход в полноэкранный режим
+      const element = remoteVideoRef.value || document.documentElement
+      fullscreenElement.value = element
+
+      if (element.requestFullscreen) {
+        await element.requestFullscreen()
+      } else if (element.webkitRequestFullscreen) {
+        await element.webkitRequestFullscreen()
+      } else if (element.msRequestFullscreen) {
+        await element.msRequestFullscreen()
+      }
+    } else {
+      // Выход из полноэкранного режима
+      if (document.exitFullscreen) {
+        await document.exitFullscreen()
+      } else if (document.webkitExitFullscreen) {
+        await document.webkitExitFullscreen()
+      } else if (document.msExitFullscreen) {
+        await document.msExitFullscreen()
+      }
+    }
+  } catch (error) {
+    console.error('Fullscreen error:', error)
+    globalStore.addNotification('Fullscreen mode not supported', 'error')
+  }
+}
+
 // Watch for stream changes
 watch(
   () => webrtcStore.localStream,
@@ -890,6 +1112,16 @@ watch(
     })
   },
   { immediate: true },
+)
+
+watch(
+  () => webrtcStore.screenShareError,
+  (error) => {
+    if (error) {
+      screenShareError.value = error
+      globalStore.addNotification(`Screen share error: ${error}`, 'error')
+    }
+  }
 )
 
 // Update call duration
@@ -918,11 +1150,34 @@ const vClickOutside = {
 
 // Lifecycle
 onMounted(() => {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    isScreenShareSupported.value = false
+    console.warn('Screen sharing not supported in this browser')
+  }
+
+  document.addEventListener('fullscreenchange', handleFullscreenChange)
+  document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+  document.addEventListener('msfullscreenchange', handleFullscreenChange)
+  document.addEventListener('keydown', handleKeydown)
+
+  // Проверяем наличие необходимых методов в store
+  if (typeof webrtcStore.startScreenShare !== 'function' ||
+      typeof webrtcStore.stopScreenShare !== 'function') {
+    isScreenShareSupported.value = false
+    console.warn('Screen sharing methods not available in WebRTC store')
+  }
+
   initializeCall()
   durationInterval = setInterval(updateCallDuration, 1000)
 })
 
 onUnmounted(async () => {
+
+  document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+  document.removeEventListener('msfullscreenchange', handleFullscreenChange)
+  document.removeEventListener('keydown', handleKeydown)
+
   // Cleanup intervals
   if (durationInterval) {
     clearInterval(durationInterval)
@@ -965,6 +1220,10 @@ onUnmounted(async () => {
   @apply bg-red-500 hover:bg-red-600 text-white;
 }
 
+.control-button:disabled {
+  @apply opacity-50 cursor-not-allowed hover:scale-100 active:scale-100;
+}
+
 /* Animations */
 @keyframes bounce-gentle {
   0%,
@@ -1004,4 +1263,51 @@ onUnmounted(async () => {
   padding-bottom: env(safe-area-inset-bottom);
   padding-left: env(safe-area-inset-left);
 }
+
+/* Fullscreen styles */
+:fullscreen .safe-area-inset,
+:-webkit-full-screen .safe-area-inset,
+:-moz-full-screen .safe-area-inset,
+:-ms-fullscreen .safe-area-inset {
+  display: none;
+}
+
+:fullscreen .control-button,
+:-webkit-full-screen .control-button,
+:-moz-full-screen .control-button,
+:-ms-fullscreen .control-button {
+  display: none;
+}
+
+:fullscreen #app,
+:-webkit-full-screen #app,
+:-moz-full-screen #app,
+:-ms-fullscreen #app {
+  background: black;
+}
+
+/* Hide elements in fullscreen */
+:fullscreen header,
+:-webkit-full-screen header,
+:-moz-full-screen header,
+:-ms-fullscreen header {
+  display: none !important;
+}
+
+:fullscreen .bg-gray-900, /* Controls container */
+:-webkit-full-screen .bg-gray-900,
+:-moz-full-screen .bg-gray-900,
+:-ms-fullscreen .bg-gray-900 {
+  display: none !important;
+}
+
+/* Ensure video takes full space in fullscreen */
+:fullscreen video,
+:-webkit-full-screen video,
+:-moz-full-screen video,
+:-ms-fullscreen video {
+  object-fit: contain;
+  background: black;
+}
+
 </style>
